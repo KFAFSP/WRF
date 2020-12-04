@@ -331,7 +331,11 @@ END IF
 
             if (use_radar_rf) then
                if ( echo_rf_good ) then
-                  model_rf(k,n) = leh1 + leh2 * alog10(model_rho(k,n) * model_qrn(k,n) * 1.0e+3)
+                  ! test different reflectivity direct assimilation (Lagasio-Parodi 13/06/2018) 
+                  ! original source was: `model_rf(k,n) = leh1 + leh2 * alog10(model_rho(k,n) * model_qrn(k,n) * 1.0e+3)`
+                  call da_radar_rf(model_qrn(k,n),model_qsn(k,n),model_qgr(k,n),model_tc(k,n),model_rho(k,n),bg_rze)
+                  model_rf(k,n) = 10.0*log(bg_rze)  ! Z to dBZ
+                  ! end of custom change
                   iv % radar(n) % rf(k) % inv = ob % radar(n) % rf(k) - model_rf(k,n)
                end if
             end if
