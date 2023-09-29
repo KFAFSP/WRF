@@ -1,0 +1,11 @@
+*
+
+!.gitignore
+!force_ideal.nc
+!forcing_file.cdl
+!GABLS_II_forcing.txt
+!input_soil
+!input_sounding
+!make_scm_forcing.ncl
+!namelist.input
+!README.scm
