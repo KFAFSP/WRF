@@ -2939,7 +2939,6 @@
       real(kind=rb) :: co2reg
       real(kind=rb) :: compfp
 
-
 ! Initializations
       stpfac = 296._rb/1013._rb
 
@@ -4676,6 +4675,9 @@
       use rrtmg_sw_setcoef, only: swatmref
 
       implicit none
+
+      ! KFAF: Static flag that indicates whether the RRTMG SW plugin is used.
+      LOGICAL, SAVE, PUBLIC :: use_plugin
 
       contains
 
@@ -8191,6 +8193,56 @@
 
       contains
 
+      ! TODO: Really? WTF man!
+      ! SUBROUTINE solar_flux_sw(E_solar, n_prime)
+      !    USE rrsw_kg16, ONLY: sfluxref => E_ref_16!(ng16)
+      !    USE rrsw_kg17, ONLY: sfluxref => E_ref_17, strrat => a_17!(ng17,5)
+      !    USE rrsw_kg18, ONLY: sfluxref => E_ref_18, strrat => a_18!(ng18,9)
+      !    USE rrsw_kg19, ONLY: sfluxref => E_ref_19, strrat => a_19!(ng19,9)
+      !    USE rrsw_kg20, ONLY: sfluxref => E_ref_20!(ng20)
+      !    USE rrsw_kg21, ONLY: sfluxref => E_ref_21, strrat => a_21!(ng21,9)
+      !    USE rrsw_kg22, ONLY: sfluxref => E_ref_22, strrat => a_22!(ng22,9)
+      !    USE rrsw_kg23, ONLY: sfluxref => E_ref_23!(ng23)
+      !    USE rrsw_kg24, ONLY: sfluxref => E_ref_24, strrat => a_24!(ng24,9)
+      !    USE rrsw_kg25, ONLY: sfluxref => E_ref_25!(ng25)
+      !    USE rrsw_kg26, ONLY: sfluxref => E_ref_26!(ng26)
+      !    USE rrsw_kg27, ONLY: sfluxref => E_ref_27!(ng27)
+      !    USE rrsw_kg28, ONLY: sfluxref => E_ref_28, strrat => a_28!(ng28,5)
+      !    USE rrsw_kg29, ONLY: sfluxref => E_ref_29!(ng29)
+
+      !    IMPLICIT NONE
+
+      !    ! Solar source function [ngptsw] (W/cm^2).
+      !    REAL(kind=rb), INTENT(OUT) :: E_solar(:)
+      !    REAL(kind=rb), INTENT(IN)  :: n_prime(mxmol,:)
+
+      !    ! Some weird constant.
+      !    REAL(kind=rb), PARAMETER   :: oneminus = 1.0_rb - 1.e-06_rb
+
+      !    ! KFAF: I suppose this is what we're aiming for:
+      !    !     http://rtweb.aer.com/solar_frame.html
+
+      !    ! All the regular ones.
+      !    E_solar(1:ngs16) = E_ref_16(:)
+      !    E_solar(ngs19+1:ngs20) = E_ref_20(:)
+      !    E_solar(ngs22+1:ngs23) = E_ref_23(:)
+      !    E_solar(ngs24+1:ngs25) = E_ref_25(:)
+      !    E_solar(ngs25+1:ngs26) = E_ref_26(:)
+      !    E_solar(ngs28+1:ngs29) = E_ref_29(:)
+         
+      !    ! This one is scaled to correct for some low-res error?
+      !    E_solar(ngs26+1:ngs27) = E_ref_27(:) * scalekur
+
+      !    ! 17: h20 co2 5
+      !    ! 18: h2o ch4 9
+      !    ! 19: h2o co2 9 
+      !    ! 21: h2o co2 9
+      !    ! 22: h2o o2 9 (*1.6_rb)
+      !    ! 24: h2o o2 9
+      !    ! 28: o3 o2 5
+
+      ! END SUBROUTINE
+
 ! ---------------------------------------------------------------------------
       subroutine spcvmc_sw &
             (nlayers, istart, iend, icpr, iout, &
@@ -8236,7 +8288,7 @@
 ! ------------------------------------------------------------------
 
 ! ------- Declarations ------
-
+      USE rrtmg_sw_init, ONLY: use_plugin
 ! ------- Input -------
 
       integer(kind=im), intent(in) :: nlayers
@@ -8412,6 +8464,60 @@
 !     real(kind=rb) :: zbbfd(nlayers+1), zbbfu(nlayers+1)
 !     real(kind=rb) :: zbbfddir(nlayers+1), zbbcddir(nlayers+1)
 
+      INTERFACE
+         SUBROUTINE plugin_rrtmg_sw_taumol( &
+            n_layers, n_gpt, n_gas, &
+            T_lay, p_lay, n_d, n_prime, &
+            tau_gas, tau_rayl) BIND(C)
+            USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+            IMPLICIT NONE
+
+            ! Number of model layers (1).
+            INTEGER(kind=c_int), VALUE :: n_layers
+            ! Number of model g-points (1).
+            INTEGER(kind=c_int), VALUE :: n_gpt
+            ! Number of model gas species (1).
+            INTEGER(kind=c_int), VALUE :: n_gas
+
+            ! Layer temperatures [n_layers] (K).
+            REAL(kind=c_float), INTENT(IN)  :: T_lay(n_layers)
+            ! Layer pressures [n_layers] (Pa).
+            REAL(kind=c_float), INTENT(IN)  :: p_lay(n_layers)
+            ! Dry air mass in column [n_layers] (molec./cm^2).
+            REAL(kind=c_float), INTENT(IN)  :: n_d(n_layers)
+            ! Volume mixing ratios of gas species [n_gas,n_layers] (1).
+            !     "h20", "co2", "o3", "n2o", N/A, "ch4", "o2", ...
+            REAL(kind=c_float), INTENT(IN)  :: n_prime(n_gas,n_layers)
+
+            ! Optical depth from gas contributors [n_layers,n_gpt] (ln 1).
+            REAL(kind=c_float), INTENT(OUT) :: tau_gas(n_layers,n_gpt)
+            ! Optical depth from Rayleigh scattering [n_layers,n_gpt] (ln 1).
+            REAL(kind=c_float), INTENT(OUT) :: tau_rayl(n_layers,n_gpt)
+         END SUBROUTINE
+
+         SUBROUTINE plugin_rrtmg_sw_solar_source( &
+            n_layers, n_gpt, n_gas, &
+            n_prime, &
+            E_solar) BIND(C)
+            USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+            IMPLICIT NONE
+
+            ! Number of model layers (1).
+            INTEGER(kind=c_int), VALUE :: n_layers
+            ! Number of model g-points (1).
+            INTEGER(kind=c_int), VALUE :: n_gpt
+            ! Number of model gas species (1).
+            INTEGER(kind=c_int), VALUE :: n_gas
+
+            ! Volume mixing ratios of gas species [n_gas,n_layers] (1).
+            !     "h20", "co2", "o3", "n2o", N/A, "ch4", "o2", ...
+            REAL(kind=c_float), INTENT(IN)  :: n_prime(n_gas,n_layers)
+
+            ! Solar source flux [n_gpt] (W/cm^2).
+            REAL(kind=c_float), INTENT(OUT) :: E_solar(n_gpt)
+         END SUBROUTINE
+      END INTERFACE
+
 ! ------------------------------------------------------------------
 
 ! Initializations
@@ -8440,15 +8546,43 @@
          pnifddir(jk)=0._rb
       enddo
 
+      IF (use_plugin) THEN
+         ! KFAF: Remember, these are all dead here:
+         !           laytrop, layswtch, laylow, jp, jt, jt1,
+         !           co2mult, colch4, colco2, colh2o, colmol, coln2o,
+         !           colo2, colo3, fac00, fac01, fac10, fac11,
+         !           selffac, selffrac, indself, forfac, forfrac, indfor
+         !       But they are not used beyond this point!
+         CALL plugin_rrtmg_sw_taumol( &
+            n_layers=nlayers, n_gpt=ngptsw, n_gas=mxmol, &
+            T_lay=tavel, P_lay=pavel, n_d=coldry, n_prime=wkl, &
+            tau_gas=ztaug, tau_rayl=ztaur)
 
-! Calculate the optical depths for gaseous absorption and Rayleigh scattering
+         ! TODO: Implement solar flux. This is really weird and I don't
+         !       understand why the RRTMG and RRTMGP implementation differ
+         !       so much. For reference: RRTMG computes it from the reduced
+         !       reference flux during interpolation, scaling it sometimes,
+         !       and adding other contributions sometimes. RRTMGP uses a
+         !       constant map. I expect all to be constant in any case!
+         ! CALL solar_flux_sw(zsflxzen, wkl)
 
-      call taumol_sw(klev, &
-                     colh2o, colco2, colch4, colo2, colo3, colmol, &
-                     laytrop, jp, jt, jt1, &
-                     fac00, fac01, fac10, fac11, &
-                     selffac, selffrac, indself, forfac, forfrac, indfor, &
-                     zsflxzen, ztaug, ztaur)
+         ! KFAF: Assume we can use a sane default or something from our
+         !       plugin, I guess.
+         CALL plugin_rrtmg_sw_solar_source( &
+            n_layers=nlayers, n_gpt=ngptsw, n_gas=mxmol, &
+            n_prime=wkl, &
+            E_solar=zsflxzen)
+      ELSE
+         ! KFAF: Proceed as normal.
+         ! Calculate the optical depths for gaseous absorption and Rayleigh 
+         ! scattering.
+         CALL taumol_sw(klev, &
+            colh2o, colco2, colch4, colo2, colo3, colmol, &
+            laytrop, jp, jt, jt1, &
+            fac00, fac01, fac10, fac11, &
+            selffac, selffrac, indself, forfac, forfrac, indfor, &
+            zsflxzen, ztaug, ztaur)
+      ENDIF      
 
 ! Top of shortwave spectral band loop, jb = 16 -> 29; ibm = 1 -> 14
 
@@ -8956,6 +9090,7 @@
       use rrsw_aer, only : rsrtaua, rsrpiza, rsrasya
       use rrsw_con, only : heatfac, oneminus, pi
       use rrsw_wvn, only : wavenum1, wavenum2
+      USE rrtmg_sw_init, ONLY: use_plugin
 
 ! ------- Declarations
 
@@ -9353,16 +9488,25 @@
                          taormc, taucmc, ssacmc, asmcmc, fsfcmc)
          icpr = 1
 
-! Calculate coefficients for the temperature and pressure dependence of the 
-! molecular absorption coefficients by interpolating data from stored
-! reference atmospheres.
-
-         call setcoef_sw(nlayers, pavel, tavel, pz, tz, tbound, coldry, wkl, &
-                         laytrop, layswtch, laylow, jp, jt, jt1, &
-                         co2mult, colch4, colco2, colh2o, colmol, coln2o, &
-                         colo2, colo3, fac00, fac01, fac10, fac11, &
-                         selffac, selffrac, indself, forfac, forfrac, indfor)
-
+         IF (use_plugin) THEN
+            ! KFAF: The plugin performs interpolation on its own. This
+            !       means the following variables are now "dead":
+            !           laytrop, layswtch, laylow, jp, jt, jt1,
+            !           co2mult, colch4, colco2, colh2o, colmol, coln2o,
+            !           colo2, colo3, fac00, fac01, fac10, fac11,
+            !           selffac, selffrac, indself, forfac, forfrac, indfor
+            !       But they are only used in spcvmc_sw, which we modify!
+         ELSE
+            ! KFAF: Proceed as normal.
+            ! Calculate coefficients for the temperature and pressure 
+            ! dependence of the  molecular absorption coefficients by 
+            ! interpolating data from stored reference atmospheres.
+            CALL setcoef_sw(nlayers, pavel, tavel, pz, tz, tbound, coldry, wkl, &
+                            laytrop, layswtch, laylow, jp, jt, jt1, &
+                            co2mult, colch4, colco2, colh2o, colmol, coln2o, &
+                            colo2, colo3, fac00, fac01, fac10, fac11, &
+                            selffac, selffrac, indself, forfac, forfrac, indfor)
+         ENDIF
 
 ! Cosine of the solar zenith angle 
 !  Prevent using value of zero; ideally, SW model is not called from host model when sun 
@@ -9658,6 +9802,7 @@
                           jpband, jpb1, jpb2, rrsw_scon
       use rrsw_con, only : heatfac, oneminus, pi, grav, avogad
       use rrsw_wvn, only : ng, nspa, nspb, wavenum1, wavenum2, delwave
+      USE rrtmg_sw_init, ONLY: use_plugin
 
 ! ------- Declarations -------
 
@@ -9924,11 +10069,16 @@
 ! At this point all molecular amounts in wkl are in volume mixing ratio; 
 ! convert to molec/cm2 based on coldry for use in rrtm.  
 
-      do l = 1, nlayers
-         do imol = 1, nmol
-            wkl(imol,l) = coldry(l) * wkl(imol,l)
+      IF (use_plugin) THEN
+         ! KFAF: This is ridiculous, let's not do this.
+      ELSE
+         ! KFAF: Proceed as normal.
+         do l = 1, nlayers
+            do imol = 1, nmol
+               wkl(imol,l) = coldry(l) * wkl(imol,l)
+            enddo
          enddo
-      enddo
+      ENDIF
 
 ! Transfer aerosol optical properties to RRTM variables;
 ! modify to reverse layer indexing here if necessary.
@@ -11598,6 +11748,8 @@ CONTAINS
                        ids, ide, jds, jde, kds, kde,                &
                        ims, ime, jms, jme, kms, kme,                &
                        its, ite, jts, jte, kts, kte                 )
+   USE rrtmg_sw_init, ONLY: use_plugin
+   USE parrrsw, ONLY: mxmol
 !--------------------------------------------------------------------
    IMPLICIT NONE
 !--------------------------------------------------------------------
@@ -11607,14 +11759,61 @@ CONTAINS
                                      ims, ime, jms, jme, kms, kme,  &
                                      its, ite, jts, jte, kts, kte
 
-! Read in absorption coefficients and other data
+   INTEGER                        :: is_setup, n_layers
+
+   INTERFACE
+      FUNCTION plugin_rrtmg_sw_init(is_setup, n_layers, n_gpt, n_gas, cp_d) &
+               RESULT(status) BIND(C)
+         USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+         IMPLICIT NONE
+
+         ! Flag that indicates whether this is the one-time-setup.
+         INTEGER(kind=c_int), VALUE :: is_setup
+         ! Number of model layers (1).
+         INTEGER(kind=c_int), VALUE :: n_layers
+         ! Number of model g-points (1).
+         INTEGER(kind=c_int), VALUE :: n_gpt
+         ! Number of model gas species (1).
+         INTEGER(kind=c_int), VALUE :: n_gas
+         ! Isobaric heat capacity of dry air as used by WRF (J/kg/K).
+         REAL(kind=c_float), VALUE  :: cp_d
+         ! Result code that indicates whether the plugin can be used.
+         INTEGER(kind=c_int)        :: status
+      END FUNCTION
+   END INTERFACE
+
+   ! KFAF: The allowed_to_read flag is only set on the very first call that
+   !       happens during the em initialization. However, the current
+   !       function may be called on _every timestep_ if domain nesting is
+   !       is used. To avoid unnecessary work, we use the allowed_to_read
+   !       gate for one-time-setup.
+
    IF ( allowed_to_read ) THEN
-     CALL rrtmg_swlookuptable
+      ! Read in absorption coefficients and other data.
+      CALL rrtmg_swlookuptable
+
+      ! Perform g-point reduction and other initializations.
+      ! Specific heat of dry air (cp) used in flux to heating rate conversion factor.   
+      CALL rrtmg_sw_ini(cp)
    ENDIF
 
-! Perform g-point reduction and other initializations
-! Specific heat of dry air (cp) used in flux to heating rate conversion factor.
-   call rrtmg_sw_ini(cp)
+   n_layers = kte - kts
+   IF (n_layers .NE. (kme - kms)) THEN
+      ! KFAF: Our tile does not extend across the entire layer dimension in
+      !       memory. That doesn't make sense to me, and I don't want to
+      !       deal with it.
+      CALL wrf_error_fatal("plugin_rrtmg_sw: Layer tiling detected!")
+   ENDIF
+
+   ! KFAF: Call the plugin initializer every time to determine whether we
+   !       should be using it.
+   is_setup = MERGE(1, 0, allowed_to_read)
+   use_plugin = plugin_rrtmg_sw_init( &
+      is_setup=is_setup, &
+      n_layers=n_layers, &
+      n_gpt=ngptsw, &
+      n_gas=mxmol, &
+      cp_d=cp) .EQ. 0
 
    END SUBROUTINE rrtmg_swinit
 

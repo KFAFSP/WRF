@@ -108,6 +108,7 @@ framework_only : configcheck
 
 wrf : framework_only
 	$(MAKE) MODULE_DIRS="$(ALL_MODULES)" physics
+	(cd plugins; $(MAKE) plugins)
 	@if [ \( ! -f run/MPTABLE.TBL \) -o \
 	     \( ! -f phys/module_sf_noahmpdrv.F \) -o \
 	     \( ! -f phys/module_sf_noahmp_glacier.F \) -o \
