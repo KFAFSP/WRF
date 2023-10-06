@@ -1,0 +1,6 @@
+*
+
+!.gitignore
+!extras
+!input_sounding
+!namelist.input

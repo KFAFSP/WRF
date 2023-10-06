@@ -1,0 +1,7 @@
+*
+
+!.gitignore
+!namelist.input.jan00.ESMFSST
+!namelist.input.jan00.NETCDFSST
+!README_WRF_CPL_SST.txt
+!WRF_CPL_SST.tar.gz

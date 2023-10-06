@@ -1,0 +1,11 @@
+*
+
+!.gitignore
+!input_sounding
+!input_sounding_preWRFV3.6
+!namelist.input
+!namelist.input_2to1
+!namelist.input_3to1
+!namelist.input_4to1
+!namelist.input_5to1
+!README.quarter_ss

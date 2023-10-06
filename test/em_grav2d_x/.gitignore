@@ -1,0 +1,11 @@
+*
+
+!.gitignore
+!input_sounding
+!input_sounding.um=0
+!input_sounding.um=20
+!namelist.input
+!namelist.input.100m
+!namelist.input.200m
+!namelist.input.400m
+!README.grav2d_x

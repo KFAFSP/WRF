@@ -12,43 +12,50 @@ LIBPATHS =
 
 include ../configure.wrf
 
-$(SOLVER)_wrf : wrf.o ../main/module_wrf_top.o
+LDFLAGS += -Wl,-rpath,.
+LIB     += -L$(CURDIR)/../plugins/
+LIB 	+= -lplugin_rrtmg
+
+$(SOLVER)_wrf : wrf.o ../main/module_wrf_top.o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o wrf.exe $(LDFLAGS) wrf.o ../main/module_wrf_top.o $(LIBWRFLIB) $(LIB) 
 
-$(SOLVER)_wrfplus : wrf.o ../main/module_wrf_top.o
+$(SOLVER)_wrfplus : wrf.o ../main/module_wrf_top.o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o wrfplus.exe $(LDFLAGS) wrf.o ../main/module_wrf_top.o $(LIBWRFLIB) $(LIB)
 
-$(SOLVER)_wrf_SST_ESMF : wrf_ESMFMod.o wrf_SST_ESMF.o ../main/module_wrf_top.o
+$(SOLVER)_wrf_SST_ESMF : wrf_ESMFMod.o wrf_SST_ESMF.o ../main/module_wrf_top.o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o wrf_SST_ESMF.exe $(LDFLAGS) wrf_SST_ESMF.o wrf_ESMFMod.o ../main/module_wrf_top.o $(LIBWRFLIB) $(LIB)
 
-$(SOLVER)_ideal : module_initialize ideal_$(SOLVER).o
+$(SOLVER)_ideal : module_initialize ideal_$(SOLVER).o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o ideal.exe $(LDFLAGS) ideal_$(SOLVER).o ../dyn_$(SOLVER)/module_initialize_$(IDEAL_CASE).o $(LIBWRFLIB) $(LIB)
 
-$(SOLVER)_real : module_initialize ndown_$(SOLVER).o tc_$(SOLVER).o real_$(SOLVER).o
+$(SOLVER)_real : module_initialize ndown_$(SOLVER).o tc_$(SOLVER).o real_$(SOLVER).o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o ndown.exe $(LDFLAGS) ndown_$(SOLVER).o  ../dyn_$(SOLVER)/module_initialize_$(IDEAL_CASE).o $(LIBWRFLIB) $(LIB)
 	$(LD) -o tc.exe $(LDFLAGS) tc_$(SOLVER).o  ../dyn_$(SOLVER)/module_initialize_$(IDEAL_CASE).o $(LIBWRFLIB) $(LIB)
 	$(LD) -o real.exe $(LDFLAGS) real_$(SOLVER).o ../dyn_$(SOLVER)/module_initialize_$(IDEAL_CASE).o $(LIBWRFLIB) $(LIB)
 
-convert_em : convert_em.o
+convert_em : convert_em.o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(LD) -o convert_em.exe $(LDFLAGS) convert_em.o $(LIBWRFLIB) $(LIB)
 
-convert_nmm : convert_nmm.o
+convert_nmm : convert_nmm.o plugins
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(FC) -o convert_nmm.exe $(LDFLAGS) convert_nmm.o $(LIBWRFLIB) $(LIB)
 
-real_nmm : real_nmm.o
+real_nmm : real_nmm.o plugins
 	( cd ../dyn_nmm ;  $(MAKE) module_initialize_real.o )
 	$(RANLIB) $(RLFLAGS) $(LIBWRFLIB)
 	$(FC) -o real_nmm.exe $(LDFLAGS) real_nmm.o $(LIBWRFLIB) $(LIB)
 
 module_initialize : ../dyn_$(SOLVER)/module_initialize_$(IDEAL_CASE).o
 #	( cd ../dyn_$(SOLVER) ;  $(MAKE) module_initialize_$(IDEAL_CASE).o )
+
+plugins:
+	$(MAKE) ../plugins
 
 ## prevent real being compiled for OMP -- only for regtesting
 #$(SOLVER)_real : module_initialize real_$(SOLVER).o

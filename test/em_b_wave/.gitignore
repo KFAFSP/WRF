@@ -1,0 +1,6 @@
+*
+
+!.gitignore
+!input_jet
+!namelist.input
+!namelist.input.backwards

@@ -7882,6 +7882,9 @@ contains
 
       integer , save    :: nlayers 
 
+      ! KFAF: Static flag that indicates whether the RRTMG LW plugin is used.
+      LOGICAL, SAVE, PUBLIC :: use_plugin
+
       contains
 
 ! **************************************************************************
@@ -10700,6 +10703,7 @@ contains
       use parrrtm, only : nbndlw, ngptlw, maxxsec, mxmol
       use rrlw_con, only: fluxfac, heatfac, oneminus, pi
       use rrlw_wvn, only: ng, ngb, nspa, nspb, wavenum1, wavenum2, delwave
+      USE rrtmg_lw_init, ONLY: use_plugin
 
 ! ------- Declarations -------
 
@@ -10931,6 +10935,69 @@ contains
       real(kind=rb) :: fnetcln(0:nlay+1)      ! clean sky net longwave flux (w/m2)
       real(kind=rb) :: htrcln(0:nlay+1)       ! clean sky longwave heating rate (k/day)
 
+      INTERFACE
+         SUBROUTINE plugin_rrtmg_lw_planck_source( &
+            n_layers, n_bands, n_gas, &
+            T_lay, T_lev, T_sfc, epsilon_sfc, &
+            E_lay, E_lev, E_bnd) BIND(C)
+            USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+            IMPLICIT NONE
+
+            ! Number of model layers (1).
+            INTEGER(kind=c_int), VALUE :: n_layers
+            ! Number of model wavelength bands (1).
+            INTEGER(kind=c_int), VALUE :: n_bands
+            ! Number of model gas species (1).
+            INTEGER(kind=c_int), VALUE :: n_gas
+
+            ! Layer temperatures [n_layers] (K).
+            REAL(kind=c_float), INTENT(IN)  :: T_lay(n_layers)
+            ! Level temperatures [n_layers+1] (K).
+            REAL(kind=c_float), INTENT(IN)  :: T_lev(0:n_layers)
+            ! Surface temperature (K).
+            REAL(kind=c_float), VALUE       :: T_sfc
+            ! Surface emissivity per band [n_bands] (1).
+            REAL(kind=c_float), INTENT(IN)  :: epsilon_sfc(n_bands)
+
+            ! Planck flux per layer [n_layers,n_bands] (W/m^2???).
+            REAL(kind=c_float), INTENT(OUT) :: E_lay(n_layers,n_bands)
+            ! Planck flux per level [n_layers,n_bands] (W/m^2???).
+            REAL(kind=c_float), INTENT(OUT) :: E_lev(0:n_layers,n_bands)
+            ! Surface Planck flux??? [n_layers,n_bands] (W/m^2???).
+            REAL(kind=c_float), INTENT(OUT) :: E_bnd(n_bands)
+         END SUBROUTINE
+
+         SUBROUTINE plugin_rrtmg_lw_taumol( &
+            n_layers, n_gpt, n_gas, &
+            T_lay, p_lay, n_d, n_prime, &
+            tau_gas, a_planck) BIND(C)
+            USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+            IMPLICIT NONE
+
+            ! Number of model layers (1).
+            INTEGER(kind=c_int), VALUE :: n_layers
+            ! Number of model g-points (1).
+            INTEGER(kind=c_int), VALUE :: n_gpt
+            ! Number of model gas species (1).
+            INTEGER(kind=c_int), VALUE :: n_gas
+
+            ! Layer temperatures [n_layers] (K).
+            REAL(kind=c_float), INTENT(IN)  :: T_lay(n_layers)
+            ! Layer pressures [n_layers] (Pa).
+            REAL(kind=c_float), INTENT(IN)  :: p_lay(n_layers)
+            ! Dry air mass in column [n_layers] (molec./cm^2).
+            REAL(kind=c_float), INTENT(IN)  :: n_d(n_layers)
+            ! Volume mixing ratios of gas species [n_gas,n_layers] (1).
+            !     "h20", "co2", "o3", "n2o", N/A, "ch4", "o2", ...
+            REAL(kind=c_float), INTENT(IN)  :: n_prime(n_gas,n_layers)
+
+            ! Optical depth from gas contributors [n_layers,n_gpt] (ln 1).
+            REAL(kind=c_float), INTENT(OUT) :: tau_gas(n_layers,n_gpt)
+            ! Planck fractions [n_layers,n_gpt] (1).
+            REAL(kind=c_float), INTENT(OUT) :: a_planck(n_layers,n_gpt)
+         END SUBROUTINE
+      END INTERFACE
+
 !
 ! Initializations
 
@@ -10993,12 +11060,37 @@ contains
          call cldprmc(nlayers, inflag, iceflag, liqflag, cldfmc, ciwpmc, &
                       clwpmc, cswpmc, reicmc, relqmc, resnmc, ncbands, taucmc)
 
-! Calculate information needed by the radiative transfer routine
-! that is specific to this atmosphere, especially some of the 
-! coefficients and indices needed to compute the optical depths
-! by interpolating data from stored reference atmospheres. 
+         IF (use_plugin) THEN
+            ! KFAF: The plugin performs interpolation on its own. This
+            !       means the following variables are now "dead":
+            !           laytrop, jp, jt, jt1, planklay, planklev, plankbnd,
+            !           colh2o, colco2, colo3, coln2o, colco, colch4, colo2,
+            !           colbrd, fac00, fac01, fac10, fac11,
+            !           rat_h2oco2, rat_h2oco2_1, rat_h2oo3, rat_h2oo3_1,
+            !           rat_h2on2o, rat_h2on2o_1, rat_h2och4, rat_h2och4_1,
+            !           rat_n2oco2, rat_n2oco2_1, rat_o3co2, rat_o3co2_1,
+            !           selffac, selffrac, indself, forfac, forfrac, indfor,
+            !           minorfrac, scaleminor, scaleminorn2, indminor
+            !       But apart from
+            !           planklay, planklev, plankbnd
+            !       They are not used outside the taumol kernel, which we
+            !       replace.
 
-         call setcoef(nlayers, istart, pavel, tavel, tz, tbound, semiss, &
+            ! TODO: Implement Planck source.
+
+            ! KFAF: Assume we can use a sane default or something from our
+            !       plugin, I guess.
+            CALL plugin_rrtmg_lw_planck_source( &
+               n_layers=NLAYERS, n_bands=nbndlw, n_gas=mxmol, &
+               T_lay=tavel, T_lev=tz, T_sfc=tbound, epsilon_sfc=semiss, &
+               E_lay=planklay, E_lev=planklev, E_bnd=plankbnd)
+         ELSE
+            ! KFAF: Proceed as normal.
+            ! Calculate information needed by the radiative transfer routine
+            ! that is specific to this atmosphere, especially some of the
+            ! coefficients and indices needed to compute the optical depths
+            ! by interpolating data from stored reference atmospheres.
+            CALL setcoef(nlayers, istart, pavel, tavel, tz, tbound, semiss, &
                       coldry, wkl, wbrodl, &
                       laytrop, jp, jt, jt1, planklay, planklev, plankbnd, &
                       colh2o, colco2, colo3, coln2o, colco, colch4, colo2, &
@@ -11008,11 +11100,18 @@ contains
                       rat_n2oco2, rat_n2oco2_1, rat_o3co2, rat_o3co2_1, &
                       selffac, selffrac, indself, forfac, forfrac, indfor, &
                       minorfrac, scaleminor, scaleminorn2, indminor)
+         ENDIF
 
-!  Calculate the gaseous optical depths and Planck fractions for 
-!  each longwave spectral band.
-
-         call taumol(nlayers, pavel, wx, coldry, &
+         IF (use_plugin) THEN
+            CALL plugin_rrtmg_lw_taumol( &
+               n_layers=NLAYERS, n_gpt=ngptlw, n_gas=mxmol, &
+               T_lay=tavel, p_lay=pavel, n_d=coldry, n_prime=wkl, &
+               tau_gas=taug, a_planck=fracs)
+         ELSE
+            ! KFAF: Proceed as normal.
+            !  Calculate the gaseous optical depths and Planck fractions for
+            !  each longwave spectral band.
+            CALL taumol(nlayers, pavel, wx, coldry, &
                      laytrop, jp, jt, jt1, planklay, planklev, plankbnd, &
                      colh2o, colco2, colo3, coln2o, colco, colch4, colo2, &
                      colbrd, fac00, fac01, fac10, fac11, &
@@ -11022,7 +11121,7 @@ contains
                      selffac, selffrac, indself, forfac, forfrac, indfor, &
                      minorfrac, scaleminor, scaleminorn2, indminor, &
                      fracs, taug)
-
+         ENDIF
 
 ! Combine gaseous and aerosol optical depths, if aerosol active
          if (iaer .eq. 0) then
@@ -11115,6 +11214,7 @@ contains
       use parrrtm, only : nbndlw, ngptlw, nmol, maxxsec, mxmol
       use rrlw_con, only: fluxfac, heatfac, oneminus, pi, grav, avogad
       use rrlw_wvn, only: ng, nspa, nspb, wavenum1, wavenum2, delwave, ixindx
+      USE rrtmg_lw_init, ONLY: use_plugin
 
 ! ------- Declarations -------
 
@@ -11362,17 +11462,26 @@ contains
             summol = summol + wkl(imol,l)
          enddo
          wbrodl(l) = coldry(l) * (1._rb - summol)
-         do imol = 1, nmol
-            wkl(imol,l) = coldry(l) * wkl(imol,l)
-         enddo
-         amttl = amttl + coldry(l)+wkl(1,l)
-         wvttl = wvttl + wkl(1,l)
+         ! KFAF: Moved wkl update below, added coldry factor inline.
+         amttl = amttl + (1 + wkl(1,l)) * coldry(l)
+         wvttl = wvttl + wkl(1,l) * coldry(l)
          do ix = 1,maxxsec
             if (ixindx(ix) .ne. 0) then
                wx(ixindx(ix),l) = coldry(l) * wx(ix,l) * 1.e-20_rb
             endif
          enddo
       enddo
+
+      IF (use_plugin) THEN
+         ! KFAF: This is ridiculous, let's not do this.
+      ELSE
+         ! KFAF: Convert to molecular amounts.
+         do l = 1, nlayers
+            do imol = 1, nmol
+               wkl(imol,l) = coldry(l) * wkl(imol,l)
+            enddo
+         enddo
+      ENDIF
 
       wvsh = (amw * wvttl) / (amd * amttl)
       pwvcm = wvsh * (1.e3_rb * pz(0)) / (1.e2_rb * grav)
@@ -12892,6 +13001,8 @@ CONTAINS
                        ids, ide, jds, jde, kds, kde,                &
                        ims, ime, jms, jme, kms, kme,                &
                        its, ite, jts, jte, kts, kte                 )
+   USE rrtmg_lw_init, ONLY: use_plugin
+   USE parrrtm, ONLY: mxmol
 !--------------------------------------------------------------------
    IMPLICIT NONE
 !--------------------------------------------------------------------
@@ -12902,19 +13013,58 @@ CONTAINS
                                      its, ite, jts, jte, kts, kte
    REAL, INTENT(IN)               :: p_top 
 
+   INTEGER                        :: is_setup
+
+   INTERFACE
+      FUNCTION plugin_rrtmg_lw_init(is_setup, n_layers, n_gpt, n_gas, cp_d) &
+               RESULT(status) BIND(C)
+         USE, INTRINSIC :: iso_c_binding, ONLY: c_int, c_float
+         IMPLICIT NONE
+
+         ! Flag that indicates whether this is the one-time-setup.
+         INTEGER(kind=c_int), VALUE :: is_setup
+         ! Number of model layers (1).
+         INTEGER(kind=c_int), VALUE :: n_layers
+         ! Number of model g-points (1).
+         INTEGER(kind=c_int), VALUE :: n_gpt
+         ! Number of model gas species (1).
+         INTEGER(kind=c_int), VALUE :: n_gas
+         ! Isobaric heat capacity of dry air as used by WRF (J/kg/K).
+         REAL(kind=c_float), VALUE  :: cp_d
+         ! Result code that indicates whether the plugin can be used.
+         INTEGER(kind=c_int)        :: status
+      END FUNCTION
+   END INTERFACE
+
 ! Steven Cavallo.  Added for buffer layer adjustment.   December 2010.
    NLAYERS = kme + nint(p_top*0.01/deltap)- 1 ! Model levels plus new levels.
                                               ! nlayers will subsequently 
                                               ! replace kte+1
 
-! Read in absorption coefficients and other data
+   ! KFAF: The allowed_to_read flag is only set on the very first call that
+   !       happens during the em initialization. However, the current
+   !       function may be called on _every timestep_ if domain nesting is
+   !       is used. To avoid unnecessary work, we use the allowed_to_read
+   !       gate for one-time-setup.
+
    IF ( allowed_to_read ) THEN
-     CALL rrtmg_lwlookuptable
+      ! Read in absorption coefficients and other data.
+      CALL rrtmg_lwlookuptable
+
+      ! Perform g-point reduction and other initializations.
+      ! Specific heat of dry air (cp) used in flux to heating rate conversion factor.
+      CALL rrtmg_lw_ini(cp)
    ENDIF
 
-! Perform g-point reduction and other initializations
-! Specific heat of dry air (cp) used in flux to heating rate conversion factor.
-   call rrtmg_lw_ini(cp)
+   ! KFAF: Call the plugin initializer every time to determine whether we
+   !       should be using it.
+   is_setup = MERGE(1, 0, allowed_to_read)
+   use_plugin = plugin_rrtmg_lw_init( &
+      is_setup=is_setup, &
+      n_layers=NLAYERS, &
+      n_gpt=ngptlw, &
+      n_gas=mxmol, &
+      cp_d=cp) .EQ. 0
 
    END SUBROUTINE rrtmg_lwinit
 

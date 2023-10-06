@@ -1,0 +1,7 @@
+*
+
+!.gitignore
+!input_sounding
+!namelist.input
+!namelist.input.windfarm
+!README.seabreeze
